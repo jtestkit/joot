@@ -7,6 +7,9 @@ import org.jooq.Table;
 import org.jooq.TableField;
 
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
+import java.util.function.LongFunction;
 
 /**
  * Default implementation of JootContext.
@@ -18,6 +21,7 @@ class JootContextImpl implements JootContext {
     private final DSLContext dsl;
     private final CyclicDependencyResolver cyclicResolver;
     private final GeneratorRegistry generatorRegistry;
+    private final FactoryDefinitionRegistry definitionRegistry;
     private boolean generateNullablesGlobal = true;  // Default: true (production-like objects)
     
     /**
@@ -29,6 +33,7 @@ class JootContextImpl implements JootContext {
         this.dsl = Objects.requireNonNull(dsl, "DSLContext must not be null");
         this.cyclicResolver = new CyclicDependencyResolver(dsl);
         this.generatorRegistry = new GeneratorRegistry();
+        this.definitionRegistry = new FactoryDefinitionRegistry();
     }
     
     @Override
@@ -59,6 +64,14 @@ class JootContextImpl implements JootContext {
      */
     GeneratorRegistry getGeneratorRegistry() {
         return generatorRegistry;
+    }
+
+    /**
+     * Package-private getter for definition registry.
+     * Used by builders for resolving factory definitions.
+     */
+    FactoryDefinitionRegistry getDefinitionRegistry() {
+        return definitionRegistry;
     }
     
     @Override
@@ -109,6 +122,32 @@ class JootContextImpl implements JootContext {
     @Override
     public <T> JootContext registerGenerator(Class<T> type, ValueGenerator<T> generator) {
         generatorRegistry.registerTypeGenerator(type, generator);
+        return this;
+    }
+
+    @Override
+    public <T> JootContext sequence(Field<T> field, LongFunction<T> sequenceFn) {
+        AtomicLong counter = new AtomicLong(1);
+        registerGenerator(field, (maxLen, isUnique) -> sequenceFn.apply(counter.getAndIncrement()));
+        return this;
+    }
+
+    @Override
+    public <R extends Record> JootContext define(Table<R> table, Consumer<FactoryDefinitionBuilder<R>> config) {
+        FactoryDefinitionBuilder<R> builder = new FactoryDefinitionBuilder<>();
+        config.accept(builder);
+        definitionRegistry.register(table, builder.build(table));
+        return this;
+    }
+
+    @Override
+    public <R extends Record> JootContext define(String name, Table<R> table, Consumer<FactoryDefinitionBuilder<R>> config) {
+        FactoryDefinitionBuilder<R> builder = new FactoryDefinitionBuilder<>();
+        config.accept(builder);
+        FactoryDefinition<R> def = builder.build(table);
+        definitionRegistry.register(name, def);
+        // Also register as the table's default definition so create(TABLE) picks it up
+        definitionRegistry.register(table, def);
         return this;
     }
 }
