@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'io.github.jtestkit'
-version = '0.9.0'
+// version is set in gradle.properties
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
