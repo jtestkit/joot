@@ -45,6 +45,9 @@ Thumbs.db
 test-results/
 test-output/
 
+# Internal docs
+docs/
+
 # Temporary files
 *.tmp
 *.bak
