@@ -2,6 +2,7 @@
 
 > Lightweight testing library for jOOQ applications with automatic foreign key resolution
 
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.jtestkit/joot)](https://central.sonatype.com/artifact/io.github.jtestkit/joot)
 [![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java/)
 [![jOOQ](https://img.shields.io/badge/jOOQ-3.13+-blue.svg)](https://www.jooq.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
