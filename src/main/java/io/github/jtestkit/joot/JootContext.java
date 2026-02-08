@@ -5,6 +5,7 @@ import org.jooq.Record;
 import org.jooq.Table;
 
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * Main context for Joot test framework.
@@ -96,5 +97,39 @@ public interface JootContext {
      * @return this context for method chaining
      */
     <T> JootContext registerGenerator(Class<T> type, ValueGenerator<T> generator);
+
+    /**
+     * Defines a factory for the given table with default values, traits, and callbacks.
+     * Definitions are optional — auto-generation works without them.
+     *
+     * @param table the jOOQ table to define a factory for
+     * @param config a consumer that configures the factory definition
+     * @param <R> the Record type
+     * @return this context for chaining
+     */
+    <R extends Record> JootContext define(Table<R> table, Consumer<FactoryDefinitionBuilder<R>> config);
+
+    /**
+     * Defines a named factory that can inherit from another definition.
+     * Use with {@code f.parent("parentName")} for inheritance.
+     *
+     * @param name unique name for this factory definition
+     * @param table the jOOQ table
+     * @param config a consumer that configures the factory definition
+     * @param <R> the Record type
+     * @return this context for chaining
+     */
+    <R extends Record> JootContext define(String name, Table<R> table, Consumer<FactoryDefinitionBuilder<R>> config);
+
+    /**
+     * Registers a sequence generator for a field.
+     * The function receives an incrementing long value starting from 1.
+     *
+     * @param field the field to generate sequence values for
+     * @param sequenceFn function that converts sequence number to field value
+     * @param <T> the field type
+     * @return this context for chaining
+     */
+    <T> JootContext sequence(org.jooq.Field<T> field, java.util.function.LongFunction<T> sequenceFn);
 }
 

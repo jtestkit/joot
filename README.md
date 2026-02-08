@@ -42,7 +42,11 @@ Book book = ctx.create(BOOK, Book.class).build();
 - ✅ **Automatic FK resolution** - no manual parent entity creation
 - ✅ **Smart defaults** - generates realistic test data automatically
 - ✅ **Type-safe API** - leverages jOOQ's generated code
-- ✅ **Production-ready** - 97 integration tests, 100% pass rate
+- ✅ **Factory definitions & traits** - reusable templates with composable variations
+- ✅ **Factory inheritance** - parent/child definitions with merging
+- ✅ **Build strategies** - build without insert, inspect attributes
+- ✅ **Transient attributes** - pass non-persisted data to callbacks
+- ✅ **Production-ready** - 148 integration tests, 100% pass rate
 
 ---
 
@@ -212,7 +216,7 @@ assertThat(minimal.getBio()).isNull();      // ✅ NULL
 assertThat(minimal.getName()).isNotNull();  // ✅ Still generated (NOT NULL)
 ```
 
-### 7. Circular Dependency Handling
+### 6. Circular Dependency Handling
 
 Joot intelligently handles circular references:
 
@@ -226,14 +230,221 @@ Team team = ctx.create(TEAM, Team.class).build();
 // Joot breaks the cycle automatically ✅
 ```
 
-### 8. Data Access Helpers
+### 7. Data Access Helpers
 
 ```java
 // Retrieve created entities by PK
 Author author = ctx.get(1L, AUTHOR, Author.class);
 ```
 
-### 9. Custom Value Generators
+### 8. Factory Definitions
+
+Define reusable defaults for your entities:
+
+```java
+// Define once
+ctx.define(AUTHOR, f -> {
+    f.set(AUTHOR.NAME, "Isaac Asimov");
+    f.set(AUTHOR.COUNTRY, "US");
+});
+
+// Use everywhere — defaults applied automatically
+Author author = ctx.create(AUTHOR, Author.class).build();
+assertThat(author.getName()).isEqualTo("Isaac Asimov");
+
+// Override when needed
+Author other = ctx.create(AUTHOR, Author.class)
+    .set(AUTHOR.NAME, "Arthur Clarke")
+    .build();
+assertThat(other.getName()).isEqualTo("Arthur Clarke");
+assertThat(other.getCountry()).isEqualTo("US"); // from definition
+```
+
+### 9. Traits
+
+Named variations that compose on top of definitions:
+
+```java
+ctx.define(AUTHOR, f -> {
+    f.set(AUTHOR.NAME, "Default Author");
+    f.set(AUTHOR.COUNTRY, "US");
+
+    f.trait("european", t -> t.set(AUTHOR.COUNTRY, "DE"));
+    f.trait("renamed", t -> t.set(AUTHOR.NAME, "Special Author"));
+});
+
+// Apply single trait
+Author eu = ctx.create(AUTHOR, Author.class)
+    .trait("european")
+    .build();
+assertThat(eu.getCountry()).isEqualTo("DE");
+
+// Compose multiple traits (applied in order)
+Author special = ctx.create(AUTHOR, Author.class)
+    .trait("european")
+    .trait("renamed")
+    .build();
+assertThat(special.getCountry()).isEqualTo("DE");
+assertThat(special.getName()).isEqualTo("Special Author");
+
+// Explicit .set() always wins over traits
+Author jp = ctx.create(AUTHOR, Author.class)
+    .trait("european")
+    .set(AUTHOR.COUNTRY, "JP")
+    .build();
+assertThat(jp.getCountry()).isEqualTo("JP");
+```
+
+Unknown trait names throw `IllegalArgumentException` with a list of available traits.
+
+### 10. Sequences
+
+Predictable, auto-incrementing values for fields:
+
+```java
+ctx.sequence(AUTHOR.EMAIL, n -> "author" + n + "@test.com");
+
+Author a1 = ctx.create(AUTHOR, Author.class).build();
+Author a2 = ctx.create(AUTHOR, Author.class).build();
+// a1.getEmail() == "author1@test.com"
+// a2.getEmail() == "author2@test.com"
+
+// Works with any type
+ctx.sequence(BOOK.PAGES, n -> (int) (n * 100));
+// 100, 200, 300, ...
+```
+
+### 11. Lifecycle Callbacks
+
+Execute logic before/after entity insertion:
+
+```java
+ctx.define(AUTHOR, f -> {
+    f.set(AUTHOR.NAME, "Author");
+
+    f.beforeCreate(record -> {
+        // Modify record before INSERT
+        record.set(AUTHOR.NAME, record.get(AUTHOR.NAME).toUpperCase());
+    });
+
+    f.afterCreate(record -> {
+        // Create related entities after INSERT
+        Object authorId = record.get(AUTHOR.ID);
+        ctx.create(BOOK, Book.class)
+            .set(BOOK.AUTHOR_ID, (UUID) authorId)
+            .build();
+    });
+});
+```
+
+Trait callbacks compose with base callbacks (base runs first, then trait):
+
+```java
+ctx.define(AUTHOR, f -> {
+    f.afterCreate(r -> log("base"));
+    f.trait("logged", t -> t.afterCreate(r -> log("trait")));
+});
+
+ctx.create(AUTHOR, Author.class).trait("logged").build();
+// logs: "base", then "trait"
+```
+
+### 12. Batch Creation
+
+Create multiple entities at once with `.times()`:
+
+```java
+// Create 5 authors
+List<Author> authors = ctx.create(AUTHOR, Author.class).times(5);
+
+// With per-item customization
+List<Author> authors = ctx.create(AUTHOR, Author.class)
+    .times(3, (builder, i) -> builder.set(AUTHOR.NAME, "Author " + i));
+// "Author 0", "Author 1", "Author 2"
+
+// Works with traits and definitions
+List<Author> europeans = ctx.create(AUTHOR, Author.class)
+    .trait("european")
+    .times(10);
+```
+
+### 13. Factory Inheritance
+
+Define parent/child factory definitions with automatic merging:
+
+```java
+// Parent definition
+ctx.define("baseAuthor", AUTHOR, f -> {
+    f.set(AUTHOR.NAME, "Base Author");
+    f.set(AUTHOR.COUNTRY, "US");
+    f.trait("european", t -> t.set(AUTHOR.COUNTRY, "DE"));
+    f.afterCreate(record -> log.info("Created author"));
+});
+
+// Child inherits defaults, traits, and callbacks
+ctx.define(AUTHOR, f -> {
+    f.parent("baseAuthor");
+    f.set(AUTHOR.NAME, "Child Author"); // overrides parent's NAME
+    // COUNTRY="US" inherited, "european" trait inherited, afterCreate inherited
+});
+
+Author author = ctx.create(AUTHOR, Author.class).build();
+// name="Child Author" (child), country="US" (parent)
+
+Author eu = ctx.create(AUTHOR, Author.class).trait("european").build();
+// country="DE" (inherited trait)
+```
+
+**Merge rules:**
+- Defaults: child overrides parent
+- Generators: child overrides parent
+- Traits: child overrides parent traits with same name
+- Callbacks: concatenated (parent first, then child)
+
+Missing parent definitions throw `IllegalStateException`. Cyclic inheritance (A → B → A) is detected and throws.
+
+### 14. Build Strategies
+
+Control how entities are built:
+
+```java
+// Build without inserting into database (no FK auto-creation, no callbacks)
+AuthorRecord record = ctx.createRecord(AUTHOR)
+    .set(AUTHOR.NAME, "Preview")
+    .buildWithoutInsert();
+// record is populated but NOT in the database
+
+// Inspect resolved attributes as a map
+Map<Field<?>, Object> attrs = ctx.createRecord(AUTHOR)
+    .trait("european")
+    .buildAttributes();
+// attrs contains {AUTHOR.NAME -> "...", AUTHOR.COUNTRY -> "DE", ...}
+```
+
+### 15. Transient Attributes
+
+Pass non-persisted data to lifecycle callbacks:
+
+```java
+ctx.define(AUTHOR, f -> {
+    f.set(AUTHOR.NAME, "Author");
+    f.afterCreate((record, transients) -> {
+        int bookCount = transients.getOrDefault("bookCount", Integer.class, 0);
+        UUID authorId = (UUID) record.get(AUTHOR.ID);
+        for (int i = 0; i < bookCount; i++) {
+            ctx.create(BOOK, Book.class).set(BOOK.AUTHOR_ID, authorId).build();
+        }
+    });
+});
+
+// Pass transient values at build time
+Author author = ctx.create(AUTHOR, Author.class)
+    .transientAttr("bookCount", 3)
+    .build();
+// 3 books auto-created via callback
+```
+
+### 16. Custom Value Generators
 
 Register custom generators for specific fields or types:
 
@@ -254,7 +465,7 @@ Author author = ctx.create(AUTHOR, Author.class)
     .build();
 ```
 
-### 10. Creating JootContext
+### 17. Creating JootContext
 
 `JootContext` is created from a jOOQ `DSLContext`. Choose the approach based on your test lifecycle needs:
 
@@ -325,7 +536,7 @@ class MyTest extends BaseIntegrationTest {
 
 **⚠️ Important:** `JootContext` is mostly stateless, but `GeneratorRegistry` (custom generators) is shared state. If tests register different generators, use Approach 1.
 
-### 11. Database-Generated Values
+### 18. Database-Generated Values
 
 Joot respects database-generated values:
 
@@ -440,12 +651,22 @@ Strings adapt to column constraints:
 // Create context
 JootContext ctx = JootContext.create(dsl);
 
+// Factory definitions
+ctx.define(TABLE, f -> { ... });
+ctx.define("name", TABLE, f -> { f.parent("parentName"); ... });
+
+// Sequences
+ctx.sequence(FIELD, n -> "value" + n);
+
 // Create entities
 <T> T create(Table<?> table, Class<T> pojoClass).build();
 <R extends Record> R createRecord(Table<R> table).build();
 
 // Data access
 <T> T get(Object pk, Table<?> table, Class<T> pojoClass);
+
+// Nullable fields control
+ctx.generateNullables(false);  // globally skip nullable fields
 
 // Custom generators
 <T> void registerGenerator(Field<T> field, ValueGenerator<T> generator);
@@ -458,14 +679,26 @@ JootContext ctx = JootContext.create(dsl);
 // Set explicit values
 builder.set(FIELD, value)
 
+// Apply trait from definition
+builder.trait("traitName")
+
 // Control nullable generation
 builder.generateNullables(boolean)
 
 // Per-builder generator
 builder.withGenerator(FIELD, generator)
 
-// Build
-T build()
+// Batch creation
+List<T> times(int count)
+List<T> times(int count, (builder, index) -> { ... })
+
+// Transient attributes
+builder.transientAttr("name", value)
+
+// Build strategies
+T build()                           // insert + return
+T buildWithoutInsert()              // no insert, no FK auto-creation
+Map<Field<?>, Object> buildAttributes()  // resolved values map
 ```
 
 ---

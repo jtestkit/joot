@@ -7,10 +7,14 @@ import org.jooq.Record;
 import org.jooq.Table;
 import org.jooq.TableField;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /**
  * Default implementation of RecordBuilder.
@@ -29,6 +33,8 @@ class RecordBuilderImpl<R extends Record> implements RecordBuilder<R> {
     private final CreationChain creationChain;
     private final Map<Field<?>, Object> explicitValues = new HashMap<>();
     private final Map<Field<?>, ValueGenerator<?>> perBuilderGenerators = new HashMap<>();
+    private final List<String> activeTraits = new ArrayList<>();
+    private final Map<String, Object> transientAttrs = new HashMap<>();
     private boolean shouldGenerateNullables;  // Can be overridden via generateNullables()
     
     RecordBuilderImpl(DSLContext dsl, Table<R> table,
@@ -60,10 +66,58 @@ class RecordBuilderImpl<R extends Record> implements RecordBuilder<R> {
         perBuilderGenerators.put(field, generator);
         return this;
     }
-    
+
+    @Override
+    public RecordBuilder<R> trait(String traitName) {
+        activeTraits.add(traitName);
+        return this;
+    }
+
+    @Override
+    public RecordBuilder<R> transientAttr(String name, Object value) {
+        transientAttrs.put(name, value);
+        return this;
+    }
+
+    @Override
+    public List<R> times(int count) {
+        List<R> results = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            results.add(cloneConfiguration().build());
+        }
+        return results;
+    }
+
+    @Override
+    public List<R> times(int count, BiConsumer<RecordBuilder<R>, Integer> customizer) {
+        List<R> results = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            RecordBuilderImpl<R> fresh = cloneConfiguration();
+            customizer.accept(fresh, i);
+            results.add(fresh.build());
+        }
+        return results;
+    }
+
+    /**
+     * Creates a fresh builder with the same configuration.
+     * Each clone gets its own copy of explicitValues so build() doesn't leak state.
+     */
+    private RecordBuilderImpl<R> cloneConfiguration() {
+        RecordBuilderImpl<R> clone = new RecordBuilderImpl<>(dsl, table, jootContext, creationChain, shouldGenerateNullables);
+        clone.explicitValues.putAll(this.explicitValues);
+        clone.perBuilderGenerators.putAll(this.perBuilderGenerators);
+        clone.activeTraits.addAll(this.activeTraits);
+        clone.transientAttrs.putAll(this.transientAttrs);
+        return clone;
+    }
+
     @Override
     @SuppressWarnings({"rawtypes", "unchecked"})
     public R build() {
+        // 0. Resolve factory definition defaults and trait overrides
+        List<Consumer<Record>> beforeCallbacks = resolveDefinitionDefaults();
+
         // 1. Auto-create parent entities for FK fields that are not explicitly set
         // This may leave some FKs as NULL if they're part of cyclic dependency
         autoCreateForeignKeyDependencies();
@@ -97,13 +151,31 @@ class RecordBuilderImpl<R extends Record> implements RecordBuilder<R> {
             // else: nullable field without generateNullables() - leave as null
         }
         
-        // 4. INSERT into database and get the inserted record back with generated PK
+        // 4. Execute beforeCreate callbacks
+        TransientAttributes transients = new TransientAttributes(transientAttrs);
+        for (Consumer<Record> callback : beforeCallbacks) {
+            callback.accept(record);
+        }
+        for (TransientAwareCallback callback : resolveTransientBeforeCreateCallbacks()) {
+            callback.accept(record, transients);
+        }
+
+        // 5. INSERT into database and get the inserted record back with generated PK
         R insertedRecord = dsl.insertInto(table)
             .set(record)
             .returning()
             .fetchOne();
-        
-        // 5. Return the Record
+
+        // 6. Execute afterCreate callbacks
+        List<Consumer<Record>> afterCallbacks = resolveAfterCreateCallbacks();
+        for (Consumer<Record> callback : afterCallbacks) {
+            callback.accept(insertedRecord);
+        }
+        for (TransientAwareCallback callback : resolveTransientAfterCreateCallbacks()) {
+            callback.accept(insertedRecord, transients);
+        }
+
+        // 7. Return the Record
         return insertedRecord;
     }
     
@@ -353,6 +425,144 @@ class RecordBuilderImpl<R extends Record> implements RecordBuilder<R> {
     private <T> T generateWithCustomGenerator(ValueGenerator<?> generator, Field<T> field) {
         ValueGenerator<T> typedGenerator = (ValueGenerator<T>) generator;
         return typedGenerator.generate(field, table);
+    }
+
+    @Override
+    public R buildWithoutInsert() {
+        // Resolve factory definition defaults (no callbacks executed)
+        resolveDefinitionDefaults();
+
+        // Create and fill Record — no FK auto-creation, no INSERT
+        R record = dsl.newRecord(table);
+        fillRecord(record);
+        return record;
+    }
+
+    @Override
+    public Map<Field<?>, Object> buildAttributes() {
+        // Resolve factory definition defaults
+        resolveDefinitionDefaults();
+
+        // Build attribute map for all fields that would be set
+        Map<Field<?>, Object> attributes = new HashMap<>();
+        for (Field<?> field : table.fields()) {
+            if (explicitValues.containsKey(field)) {
+                attributes.put(field, explicitValues.get(field));
+            } else if (shouldSkipGeneration(field)) {
+                continue;
+            } else if (!field.getDataType().nullable()) {
+                if (!metadataAnalyzer.isForeignKeyField(field, table)) {
+                    attributes.put(field, generateDefaultValue(field));
+                }
+            } else if (shouldGenerateNullables) {
+                attributes.put(field, generateDefaultValue(field));
+            }
+        }
+        return attributes;
+    }
+
+    /**
+     * Fills a Record with generated or explicit values.
+     * Extracted to share between build() and buildWithoutInsert().
+     */
+    private void fillRecord(R record) {
+        for (Field<?> field : table.fields()) {
+            if (explicitValues.containsKey(field)) {
+                setField(record, field, explicitValues.get(field));
+            } else if (shouldSkipGeneration(field)) {
+                continue;
+            } else if (!field.getDataType().nullable()) {
+                if (metadataAnalyzer.isForeignKeyField(field, table)) {
+                    // In buildWithoutInsert mode, FK fields without explicit values are skipped
+                    continue;
+                }
+                Object value = generateDefaultValue(field);
+                setField(record, field, value);
+            } else if (shouldGenerateNullables) {
+                Object value = generateDefaultValue(field);
+                setField(record, field, value);
+            }
+        }
+    }
+
+    /**
+     * Resolves factory definition defaults and trait overrides.
+     * Merges into explicitValues/perBuilderGenerators via putIfAbsent
+     * so explicit .set() calls always win.
+     *
+     * @return list of beforeCreate callbacks to execute (empty if no definition)
+     */
+    @SuppressWarnings("unchecked")
+    private List<Consumer<Record>> resolveDefinitionDefaults() {
+        FactoryDefinitionRegistry registry = ((JootContextImpl) jootContext).getDefinitionRegistry();
+        FactoryDefinition<R> def = registry.resolve(table);
+        if (def == null) {
+            if (!activeTraits.isEmpty()) {
+                throw new IllegalArgumentException(
+                    "Cannot apply traits — no factory definition registered for table '" +
+                    table.getName() + "'. Register one with ctx.define(" + table.getName() + ", ...)");
+            }
+            return Collections.emptyList();
+        }
+
+        // Validate that all requested traits exist
+        for (String traitName : activeTraits) {
+            if (!def.hasTrait(traitName)) {
+                throw new IllegalArgumentException(
+                    "Unknown trait '" + traitName + "' for table '" + table.getName() +
+                    "'. Available traits: " + def.getTraitNames());
+            }
+        }
+
+        // Merge definition defaults (trait overrides on top of base)
+        Map<Field<?>, Object> resolvedDefaults = def.resolveDefaults(activeTraits);
+        for (Map.Entry<Field<?>, Object> entry : resolvedDefaults.entrySet()) {
+            explicitValues.putIfAbsent(entry.getKey(), entry.getValue());
+        }
+
+        // Merge definition generators
+        Map<Field<?>, ValueGenerator<?>> resolvedGenerators = def.resolveGenerators(activeTraits);
+        for (Map.Entry<Field<?>, ValueGenerator<?>> entry : resolvedGenerators.entrySet()) {
+            perBuilderGenerators.putIfAbsent(entry.getKey(), entry.getValue());
+        }
+
+        return def.resolveBeforeCreateCallbacks(activeTraits);
+    }
+
+    /**
+     * Resolves afterCreate callbacks from definition and active traits.
+     */
+    private List<Consumer<Record>> resolveAfterCreateCallbacks() {
+        FactoryDefinitionRegistry registry = ((JootContextImpl) jootContext).getDefinitionRegistry();
+        FactoryDefinition<R> def = registry.resolve(table);
+        if (def == null) {
+            return Collections.emptyList();
+        }
+        return def.resolveAfterCreateCallbacks(activeTraits);
+    }
+
+    /**
+     * Resolves transient-aware beforeCreate callbacks from definition and active traits.
+     */
+    private List<TransientAwareCallback> resolveTransientBeforeCreateCallbacks() {
+        FactoryDefinitionRegistry registry = ((JootContextImpl) jootContext).getDefinitionRegistry();
+        FactoryDefinition<R> def = registry.resolve(table);
+        if (def == null) {
+            return Collections.emptyList();
+        }
+        return def.resolveTransientBeforeCreateCallbacks(activeTraits);
+    }
+
+    /**
+     * Resolves transient-aware afterCreate callbacks from definition and active traits.
+     */
+    private List<TransientAwareCallback> resolveTransientAfterCreateCallbacks() {
+        FactoryDefinitionRegistry registry = ((JootContextImpl) jootContext).getDefinitionRegistry();
+        FactoryDefinition<R> def = registry.resolve(table);
+        if (def == null) {
+            return Collections.emptyList();
+        }
+        return def.resolveTransientAfterCreateCallbacks(activeTraits);
     }
 }
 
