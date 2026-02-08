@@ -23,6 +23,9 @@ public class FactoryDefinitionBuilder<R extends Record> {
     private final Map<String, Trait<R>> traits = new LinkedHashMap<>();
     private final List<Consumer<Record>> beforeCreateCallbacks = new ArrayList<>();
     private final List<Consumer<Record>> afterCreateCallbacks = new ArrayList<>();
+    private final List<TransientAwareCallback> transientBeforeCreateCallbacks = new ArrayList<>();
+    private final List<TransientAwareCallback> transientAfterCreateCallbacks = new ArrayList<>();
+    private String parentName;
 
     /**
      * Sets a default value for a field.
@@ -59,6 +62,16 @@ public class FactoryDefinitionBuilder<R extends Record> {
     }
 
     /**
+     * Sets the parent factory name for inheritance.
+     * The child inherits defaults, generators, traits, and callbacks from the parent.
+     * Child values override parent values.
+     */
+    public FactoryDefinitionBuilder<R> parent(String parentName) {
+        this.parentName = parentName;
+        return this;
+    }
+
+    /**
      * Registers a callback to execute after INSERT.
      */
     public FactoryDefinitionBuilder<R> afterCreate(Consumer<Record> callback) {
@@ -67,10 +80,27 @@ public class FactoryDefinitionBuilder<R extends Record> {
     }
 
     /**
+     * Registers a transient-aware callback to execute before INSERT.
+     */
+    public FactoryDefinitionBuilder<R> beforeCreate(TransientAwareCallback callback) {
+        transientBeforeCreateCallbacks.add(callback);
+        return this;
+    }
+
+    /**
+     * Registers a transient-aware callback to execute after INSERT.
+     */
+    public FactoryDefinitionBuilder<R> afterCreate(TransientAwareCallback callback) {
+        transientAfterCreateCallbacks.add(callback);
+        return this;
+    }
+
+    /**
      * Builds the immutable FactoryDefinition. Package-private.
      */
     FactoryDefinition<R> build(Table<R> table) {
-        return new FactoryDefinition<>(table, defaultValues, generators, traits,
-                beforeCreateCallbacks, afterCreateCallbacks);
+        return new FactoryDefinition<>(table, parentName, defaultValues, generators, traits,
+                beforeCreateCallbacks, afterCreateCallbacks,
+                transientBeforeCreateCallbacks, transientAfterCreateCallbacks);
     }
 }

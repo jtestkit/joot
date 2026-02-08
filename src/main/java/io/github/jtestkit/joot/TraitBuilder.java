@@ -21,6 +21,8 @@ public class TraitBuilder<R extends Record> {
     private final Map<Field<?>, ValueGenerator<?>> generators = new LinkedHashMap<>();
     private final List<Consumer<Record>> beforeCreateCallbacks = new ArrayList<>();
     private final List<Consumer<Record>> afterCreateCallbacks = new ArrayList<>();
+    private final List<TransientAwareCallback> transientBeforeCreateCallbacks = new ArrayList<>();
+    private final List<TransientAwareCallback> transientAfterCreateCallbacks = new ArrayList<>();
 
     /**
      * Sets a field override for this trait.
@@ -55,9 +57,26 @@ public class TraitBuilder<R extends Record> {
     }
 
     /**
+     * Registers a transient-aware callback to execute before INSERT.
+     */
+    public TraitBuilder<R> beforeCreate(TransientAwareCallback callback) {
+        transientBeforeCreateCallbacks.add(callback);
+        return this;
+    }
+
+    /**
+     * Registers a transient-aware callback to execute after INSERT.
+     */
+    public TraitBuilder<R> afterCreate(TransientAwareCallback callback) {
+        transientAfterCreateCallbacks.add(callback);
+        return this;
+    }
+
+    /**
      * Builds the immutable Trait. Package-private.
      */
     Trait<R> build(String name) {
-        return new Trait<>(name, overrides, generators, beforeCreateCallbacks, afterCreateCallbacks);
+        return new Trait<>(name, overrides, generators, beforeCreateCallbacks, afterCreateCallbacks,
+                transientBeforeCreateCallbacks, transientAfterCreateCallbacks);
     }
 }

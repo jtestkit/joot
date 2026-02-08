@@ -3,6 +3,7 @@ package io.github.jtestkit.joot;
 import org.jooq.Field;
 
 import java.util.List;
+import java.util.Map;
 import java.util.function.BiConsumer;
 
 /**
@@ -77,10 +78,36 @@ public interface PojoBuilder<P> {
     List<P> times(int count, BiConsumer<PojoBuilder<P>, Integer> customizer);
 
     /**
+     * Sets a transient attribute that is passed to lifecycle callbacks but not persisted.
+     *
+     * @param name the attribute name
+     * @param value the attribute value
+     * @return this builder for chaining
+     */
+    PojoBuilder<P> transientAttr(String name, Object value);
+
+    /**
      * Builds the entity, inserts it into the database, and returns the POJO.
      *
      * @return the created POJO with all values including generated ID
      */
     P build();
+
+    /**
+     * Builds a POJO with all values populated but does NOT insert into the database.
+     * Foreign key dependencies are NOT auto-created.
+     * Lifecycle callbacks are NOT executed.
+     *
+     * @return the populated POJO (not persisted)
+     */
+    P buildWithoutInsert();
+
+    /**
+     * Returns the resolved field-value map without creating an entity or inserting.
+     * Useful for inspecting what values would be generated.
+     *
+     * @return map of fields to their resolved values
+     */
+    Map<Field<?>, Object> buildAttributes();
 }
 

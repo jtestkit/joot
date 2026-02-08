@@ -28,7 +28,8 @@ class PojoBuilderImpl<P> implements PojoBuilder<P> {
     private final Map<Field<?>, Object> explicitValues = new HashMap<>();
     private final Map<Field<?>, ValueGenerator<?>> perBuilderGenerators = new HashMap<>();
     private final List<String> activeTraits = new ArrayList<>();
-    private Boolean shouldGenerateNullables = null;  // null = use context default
+    private final Map<String, Object> transientAttrs = new HashMap<>();
+    private boolean shouldGenerateNullables;
     
     PojoBuilderImpl(DSLContext dsl, Table<?> table, Class<P> pojoClass, 
                     JootContext jootContext,
@@ -39,10 +40,7 @@ class PojoBuilderImpl<P> implements PojoBuilder<P> {
         this.pojoClass = pojoClass;
         this.jootContext = jootContext;
         this.creationChain = creationChain;
-        // Start with initial value, can be overridden by builder
-        if (generateNullables) {
-            this.shouldGenerateNullables = true;
-        }
+        this.shouldGenerateNullables = generateNullables;
     }
     
     @Override
@@ -70,6 +68,12 @@ class PojoBuilderImpl<P> implements PojoBuilder<P> {
     }
 
     @Override
+    public PojoBuilder<P> transientAttr(String name, Object value) {
+        transientAttrs.put(name, value);
+        return this;
+    }
+
+    @Override
     public List<P> times(int count) {
         List<P> results = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
@@ -92,20 +96,42 @@ class PojoBuilderImpl<P> implements PojoBuilder<P> {
     private PojoBuilderImpl<P> cloneConfiguration() {
         PojoBuilderImpl<P> clone = new PojoBuilderImpl<>(dsl, table, pojoClass, jootContext, creationChain,
                 ((JootContextImpl) jootContext).getGenerateNullablesGlobal());
-        if (shouldGenerateNullables != null) {
-            clone.shouldGenerateNullables = this.shouldGenerateNullables;
-        }
+        clone.shouldGenerateNullables = this.shouldGenerateNullables;
         clone.explicitValues.putAll(this.explicitValues);
         clone.perBuilderGenerators.putAll(this.perBuilderGenerators);
         clone.activeTraits.addAll(this.activeTraits);
+        clone.transientAttrs.putAll(this.transientAttrs);
         return clone;
     }
 
     @Override
     @SuppressWarnings({"rawtypes", "unchecked"})
+    public P buildWithoutInsert() {
+        RecordBuilder recordBuilder = createDelegateBuilder();
+        Record record = recordBuilder.buildWithoutInsert();
+        return record.into(pojoClass);
+    }
+
+    @Override
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    public Map<Field<?>, Object> buildAttributes() {
+        RecordBuilder recordBuilder = createDelegateBuilder();
+        return recordBuilder.buildAttributes();
+    }
+
+    @Override
+    @SuppressWarnings({"rawtypes", "unchecked"})
     public P build() {
-        // Delegate to RecordBuilder for all entity creation logic
-        // (FK auto-creation, value generation, insertion)
+        RecordBuilder recordBuilder = createDelegateBuilder();
+        Record record = recordBuilder.build();
+        return record.into(pojoClass);
+    }
+
+    /**
+     * Creates a RecordBuilder delegate with all configuration transferred.
+     */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private RecordBuilder createDelegateBuilder() {
         RecordBuilder recordBuilder = new RecordBuilderImpl<>(
             dsl,
             (Table) table,
@@ -113,31 +139,25 @@ class PojoBuilderImpl<P> implements PojoBuilder<P> {
             creationChain,
             ((JootContextImpl) jootContext).getGenerateNullablesGlobal()
         );
-        
-        // Transfer generateNullables flag if explicitly set
-        if (shouldGenerateNullables != null) {
-            recordBuilder.generateNullables(shouldGenerateNullables);
-        }
-        
-        // Transfer all explicit values to RecordBuilder
+
+        recordBuilder.generateNullables(shouldGenerateNullables);
+
         for (Map.Entry<Field<?>, Object> entry : explicitValues.entrySet()) {
             recordBuilder.set(entry.getKey(), entry.getValue());
         }
-        
-        // Transfer all per-builder generators to RecordBuilder
+
         for (Map.Entry<Field<?>, ValueGenerator<?>> entry : perBuilderGenerators.entrySet()) {
             recordBuilder.withGenerator((Field) entry.getKey(), entry.getValue());
         }
 
-        // Transfer active traits to RecordBuilder
         for (String traitName : activeTraits) {
             recordBuilder.trait(traitName);
         }
-        
-        // Build the Record
-        Record record = recordBuilder.build();
-        
-        // Convert Record to POJO
-        return record.into(pojoClass);
+
+        for (Map.Entry<String, Object> entry : transientAttrs.entrySet()) {
+            recordBuilder.transientAttr(entry.getKey(), entry.getValue());
+        }
+
+        return recordBuilder;
     }
 }

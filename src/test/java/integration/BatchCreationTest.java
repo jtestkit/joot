@@ -94,4 +94,10 @@ class BatchCreationTest extends BaseIntegrationTest {
         List<Author> authors = ctx.create(AUTHOR, Author.class).times(1);
         assertThat(authors).hasSize(1);
     }
+
+    @Test
+    void shouldTimesZeroReturnEmptyList() {
+        List<Author> authors = ctx.create(AUTHOR, Author.class).times(0);
+        assertThat(authors).isEmpty();
+    }
 }

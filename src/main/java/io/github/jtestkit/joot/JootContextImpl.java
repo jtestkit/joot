@@ -139,5 +139,16 @@ class JootContextImpl implements JootContext {
         definitionRegistry.register(table, builder.build(table));
         return this;
     }
+
+    @Override
+    public <R extends Record> JootContext define(String name, Table<R> table, Consumer<FactoryDefinitionBuilder<R>> config) {
+        FactoryDefinitionBuilder<R> builder = new FactoryDefinitionBuilder<>();
+        config.accept(builder);
+        FactoryDefinition<R> def = builder.build(table);
+        definitionRegistry.register(name, def);
+        // Also register as the table's default definition so create(TABLE) picks it up
+        definitionRegistry.register(table, def);
+        return this;
+    }
 }
 

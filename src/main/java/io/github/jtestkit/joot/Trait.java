@@ -25,17 +25,23 @@ class Trait<R extends Record> {
     private final Map<Field<?>, ValueGenerator<?>> generators;
     private final List<Consumer<Record>> beforeCreateCallbacks;
     private final List<Consumer<Record>> afterCreateCallbacks;
+    private final List<TransientAwareCallback> transientBeforeCreateCallbacks;
+    private final List<TransientAwareCallback> transientAfterCreateCallbacks;
 
     Trait(String name,
           Map<Field<?>, Object> overrides,
           Map<Field<?>, ValueGenerator<?>> generators,
           List<Consumer<Record>> beforeCreateCallbacks,
-          List<Consumer<Record>> afterCreateCallbacks) {
+          List<Consumer<Record>> afterCreateCallbacks,
+          List<TransientAwareCallback> transientBeforeCreateCallbacks,
+          List<TransientAwareCallback> transientAfterCreateCallbacks) {
         this.name = name;
         this.overrides = Collections.unmodifiableMap(new LinkedHashMap<>(overrides));
         this.generators = Collections.unmodifiableMap(new LinkedHashMap<>(generators));
         this.beforeCreateCallbacks = Collections.unmodifiableList(new ArrayList<>(beforeCreateCallbacks));
         this.afterCreateCallbacks = Collections.unmodifiableList(new ArrayList<>(afterCreateCallbacks));
+        this.transientBeforeCreateCallbacks = Collections.unmodifiableList(new ArrayList<>(transientBeforeCreateCallbacks));
+        this.transientAfterCreateCallbacks = Collections.unmodifiableList(new ArrayList<>(transientAfterCreateCallbacks));
     }
 
     String getName() {
@@ -56,5 +62,13 @@ class Trait<R extends Record> {
 
     List<Consumer<Record>> getAfterCreateCallbacks() {
         return afterCreateCallbacks;
+    }
+
+    List<TransientAwareCallback> getTransientBeforeCreateCallbacks() {
+        return transientBeforeCreateCallbacks;
+    }
+
+    List<TransientAwareCallback> getTransientAfterCreateCallbacks() {
+        return transientAfterCreateCallbacks;
     }
 }

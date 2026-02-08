@@ -2,12 +2,12 @@
 
 **Дата обновления:** 2026-01-04  
 **Версия:** 0.9.0  
-**Прогресс:** 9 из 10 фаз (90%) ✅
+**Прогресс:** 11 из 11 фаз (100%) ✅
 
 **Ключевые достижения:**
 - ✅ Все генераторы зарегистрированы по умолчанию
 - ✅ Семантические имена полей (`name_1` вместо `generated_12345678`)
-- ✅ 97 интеграционных тестов (100% pass rate)
+- ✅ 148 интеграционных тестов (100% pass rate)
 
 ---
 
@@ -569,9 +569,9 @@ class MyTest extends BaseIntegrationTest {
 
 | Метрика | Значение |
 |---------|----------|
-| **Фаз реализовано** | 7 + Sequences + Utility Generators ✅ |
-| **Всего тестов** | 97 интеграционных |
-| **Тесты проходят** | 97 (100%) ✅ |
+| **Фаз реализовано** | 11 ✅ |
+| **Всего тестов** | 148 интеграционных |
+| **Тесты проходят** | 148 (100%) ✅ |
 | **Строк кода (main)** | ~2000 |
 | **Строк кода (tests)** | ~2200 |
 | **Покрытие** | Все публичные API покрыты тестами |
@@ -977,10 +977,72 @@ List<Author> custom = ctx.create(AUTHOR, Author.class)
 
 ---
 
-## 🎯 Следующие фазы
+## ✅ Фаза 11: Factory Inheritance, Build Strategies, Transients
 
-### ⏳ Фаза 11: Factory Inheritance, Build Strategies, Transients
-- Named factories с наследованием (`parent`)
-- `buildWithoutInsert()` / `buildAttributes()` — стратегии создания
-- Transient attributes для callbacks
+### 11.1 Factory Inheritance
+```java
+ctx.define("baseAuthor", AUTHOR, f -> {
+    f.set(AUTHOR.NAME, "Base Author");
+    f.set(AUTHOR.COUNTRY, "US");
+});
+
+ctx.define(AUTHOR, f -> {
+    f.parent("baseAuthor");
+    f.set(AUTHOR.NAME, "Child Author"); // overrides parent
+    // COUNTRY="US" inherited
+});
+```
+- Named factory definitions (`define(name, table, ...)`)
+- Parent-child inheritance via `parent(String)`
+- Recursive merge: defaults (child wins), generators (child wins), traits (child wins by name), callbacks (concatenated)
+
+### 11.2 Build Strategies
+```java
+AuthorRecord record = ctx.createRecord(AUTHOR)
+    .buildWithoutInsert();  // no INSERT, no FK auto-creation, no callbacks
+
+Map<Field<?>, Object> attrs = ctx.createRecord(AUTHOR)
+    .buildAttributes();     // resolved field-value map, no Record or INSERT
+```
+- `buildWithoutInsert()` — populated Record without database interaction
+- `buildAttributes()` — raw attribute map for inspection
+
+### 11.3 Transient Attributes
+```java
+ctx.define(AUTHOR, f -> {
+    f.afterCreate((record, transients) -> {
+        int n = transients.getOrDefault("bookCount", Integer.class, 0);
+        // create n books...
+    });
+});
+
+ctx.create(AUTHOR, Author.class)
+    .transientAttr("bookCount", 3)
+    .build();
+```
+- Non-persisted values passed to callbacks via `TransientAwareCallback`
+- `transientAttr(String, Object)` on builders
+- `TransientAttributes.get()`, `getOrDefault()`, `has()`
+- Works with both `beforeCreate` and `afterCreate`
+- Works in traits
+
+### 11.4 Bug Fixes
+- Cycle detection in `mergeWithParent()` — предотвращает StackOverflow при циклических наследованиях
+- Validation of missing parent — `IllegalStateException` если parent не зарегистрирован
+- Validation of unknown traits — `IllegalArgumentException` с списком доступных трейтов
+- Fix `generateNullables(false)` в PojoBuilderImpl — значение false терялось при передаче в delegate
+- Cleanup: `Boolean` → `boolean` в PojoBuilderImpl, удалён мёртвый null-check
+
+**Тесты:** 28 тестов
+- `FactoryInheritanceTest` (7): parent defaults, callbacks, traits, override, generators, cyclic error, missing parent error
+- `BuildStrategiesTest` (9): buildWithoutInsert Record/POJO, explicit set, buildAttributes, traits, POJO, no callbacks, traits with buildWithoutInsert, generators with buildAttributes
+- `TransientAttributesTest` (8): afterCreate, create children, default null, trait callbacks, beforeCreate, RecordBuilder, inheritance, times
+- `TraitCompositionTest` (+2): unknown trait error, trait without definition error
+- `BatchCreationTest` (+1): times(0) edge case
+
+**Файлы:**
+- `src/main/java/io/github/jtestkit/joot/TransientAttributes.java`
+- `src/main/java/io/github/jtestkit/joot/TransientAwareCallback.java`
+- Updated: FactoryDefinition, FactoryDefinitionBuilder, FactoryDefinitionRegistry, Trait, TraitBuilder
+- Updated: RecordBuilder/Impl, PojoBuilder/Impl (buildWithoutInsert, buildAttributes, transientAttr, validation)
 

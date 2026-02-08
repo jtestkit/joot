@@ -110,6 +110,18 @@ public interface JootContext {
     <R extends Record> JootContext define(Table<R> table, Consumer<FactoryDefinitionBuilder<R>> config);
 
     /**
+     * Defines a named factory that can inherit from another definition.
+     * Use with {@code f.parent("parentName")} for inheritance.
+     *
+     * @param name unique name for this factory definition
+     * @param table the jOOQ table
+     * @param config a consumer that configures the factory definition
+     * @param <R> the Record type
+     * @return this context for chaining
+     */
+    <R extends Record> JootContext define(String name, Table<R> table, Consumer<FactoryDefinitionBuilder<R>> config);
+
+    /**
      * Registers a sequence generator for a field.
      * The function receives an incrementing long value starting from 1.
      *

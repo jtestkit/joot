@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import static io.github.jtestkit.joot.test.fixtures.Tables.AUTHOR;
 import static io.github.jtestkit.joot.test.fixtures.Tables.BOOK;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Tests for trait composition: single trait, multiple traits, override order, trait + explicit set.
@@ -127,5 +128,25 @@ class TraitCompositionTest extends BaseIntegrationTest {
         Author author = ctx.create(AUTHOR, Author.class).build();
 
         assertThat(author.getName()).isEqualTo("Base Author"); // no trait applied
+    }
+
+    @Test
+    void shouldThrowOnUnknownTraitName() {
+        ctx.define(AUTHOR, f -> {
+            f.set(AUTHOR.NAME, "Author");
+            f.trait("european", t -> t.set(AUTHOR.COUNTRY, "DE"));
+        });
+
+        assertThatThrownBy(() -> ctx.create(AUTHOR, Author.class).trait("typo").build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Unknown trait 'typo'");
+    }
+
+    @Test
+    void shouldThrowOnTraitWithoutDefinition() {
+        // No define() call — using trait should fail
+        assertThatThrownBy(() -> ctx.create(AUTHOR, Author.class).trait("anything").build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no factory definition");
     }
 }

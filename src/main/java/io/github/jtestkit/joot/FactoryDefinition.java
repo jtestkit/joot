@@ -22,28 +22,69 @@ import java.util.function.Consumer;
 class FactoryDefinition<R extends Record> {
 
     private final Table<R> table;
+    private final String parentName;
     private final Map<Field<?>, Object> defaultValues;
     private final Map<Field<?>, ValueGenerator<?>> generators;
     private final Map<String, Trait<R>> traits;
     private final List<Consumer<Record>> beforeCreateCallbacks;
     private final List<Consumer<Record>> afterCreateCallbacks;
+    private final List<TransientAwareCallback> transientBeforeCreateCallbacks;
+    private final List<TransientAwareCallback> transientAfterCreateCallbacks;
 
     FactoryDefinition(Table<R> table,
+                      String parentName,
                       Map<Field<?>, Object> defaultValues,
                       Map<Field<?>, ValueGenerator<?>> generators,
                       Map<String, Trait<R>> traits,
                       List<Consumer<Record>> beforeCreateCallbacks,
-                      List<Consumer<Record>> afterCreateCallbacks) {
+                      List<Consumer<Record>> afterCreateCallbacks,
+                      List<TransientAwareCallback> transientBeforeCreateCallbacks,
+                      List<TransientAwareCallback> transientAfterCreateCallbacks) {
         this.table = table;
+        this.parentName = parentName;
         this.defaultValues = Collections.unmodifiableMap(new LinkedHashMap<>(defaultValues));
         this.generators = Collections.unmodifiableMap(new LinkedHashMap<>(generators));
         this.traits = Collections.unmodifiableMap(new LinkedHashMap<>(traits));
         this.beforeCreateCallbacks = Collections.unmodifiableList(new ArrayList<>(beforeCreateCallbacks));
         this.afterCreateCallbacks = Collections.unmodifiableList(new ArrayList<>(afterCreateCallbacks));
+        this.transientBeforeCreateCallbacks = Collections.unmodifiableList(new ArrayList<>(transientBeforeCreateCallbacks));
+        this.transientAfterCreateCallbacks = Collections.unmodifiableList(new ArrayList<>(transientAfterCreateCallbacks));
     }
 
     Table<R> getTable() {
         return table;
+    }
+
+    String getParentName() {
+        return parentName;
+    }
+
+    Map<Field<?>, Object> getDefaultValues() {
+        return defaultValues;
+    }
+
+    Map<Field<?>, ValueGenerator<?>> getGenerators() {
+        return generators;
+    }
+
+    Map<String, Trait<R>> getTraits() {
+        return traits;
+    }
+
+    List<Consumer<Record>> getBeforeCreateCallbacks() {
+        return beforeCreateCallbacks;
+    }
+
+    List<Consumer<Record>> getAfterCreateCallbacks() {
+        return afterCreateCallbacks;
+    }
+
+    List<TransientAwareCallback> getTransientBeforeCreateCallbacks() {
+        return transientBeforeCreateCallbacks;
+    }
+
+    List<TransientAwareCallback> getTransientAfterCreateCallbacks() {
+        return transientAfterCreateCallbacks;
     }
 
     /**
@@ -107,9 +148,44 @@ class FactoryDefinition<R extends Record> {
     }
 
     /**
+     * Resolves transient-aware beforeCreate callbacks: base + trait callbacks in order.
+     */
+    List<TransientAwareCallback> resolveTransientBeforeCreateCallbacks(List<String> traitNames) {
+        List<TransientAwareCallback> resolved = new ArrayList<>(transientBeforeCreateCallbacks);
+        for (String traitName : traitNames) {
+            Trait<R> trait = traits.get(traitName);
+            if (trait != null) {
+                resolved.addAll(trait.getTransientBeforeCreateCallbacks());
+            }
+        }
+        return resolved;
+    }
+
+    /**
+     * Resolves transient-aware afterCreate callbacks: base + trait callbacks in order.
+     */
+    List<TransientAwareCallback> resolveTransientAfterCreateCallbacks(List<String> traitNames) {
+        List<TransientAwareCallback> resolved = new ArrayList<>(transientAfterCreateCallbacks);
+        for (String traitName : traitNames) {
+            Trait<R> trait = traits.get(traitName);
+            if (trait != null) {
+                resolved.addAll(trait.getTransientAfterCreateCallbacks());
+            }
+        }
+        return resolved;
+    }
+
+    /**
      * Checks if a trait with the given name exists.
      */
     boolean hasTrait(String name) {
         return traits.containsKey(name);
+    }
+
+    /**
+     * Returns the names of all defined traits.
+     */
+    java.util.Set<String> getTraitNames() {
+        return traits.keySet();
     }
 }

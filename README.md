@@ -43,7 +43,10 @@ Book book = ctx.create(BOOK, Book.class).build();
 - ✅ **Smart defaults** - generates realistic test data automatically
 - ✅ **Type-safe API** - leverages jOOQ's generated code
 - ✅ **Factory definitions & traits** - reusable templates with composable variations
-- ✅ **Production-ready** - 110 integration tests, 100% pass rate
+- ✅ **Factory inheritance** - parent/child definitions with merging
+- ✅ **Build strategies** - build without insert, inspect attributes
+- ✅ **Transient attributes** - pass non-persisted data to callbacks
+- ✅ **Production-ready** - 148 integration tests, 100% pass rate
 
 ---
 
@@ -213,7 +216,7 @@ assertThat(minimal.getBio()).isNull();      // ✅ NULL
 assertThat(minimal.getName()).isNotNull();  // ✅ Still generated (NOT NULL)
 ```
 
-### 7. Circular Dependency Handling
+### 6. Circular Dependency Handling
 
 Joot intelligently handles circular references:
 
@@ -227,14 +230,14 @@ Team team = ctx.create(TEAM, Team.class).build();
 // Joot breaks the cycle automatically ✅
 ```
 
-### 8. Data Access Helpers
+### 7. Data Access Helpers
 
 ```java
 // Retrieve created entities by PK
 Author author = ctx.get(1L, AUTHOR, Author.class);
 ```
 
-### 9. Factory Definitions
+### 8. Factory Definitions
 
 Define reusable defaults for your entities:
 
@@ -257,7 +260,7 @@ assertThat(other.getName()).isEqualTo("Arthur Clarke");
 assertThat(other.getCountry()).isEqualTo("US"); // from definition
 ```
 
-### 10. Traits
+### 9. Traits
 
 Named variations that compose on top of definitions:
 
@@ -292,7 +295,9 @@ Author jp = ctx.create(AUTHOR, Author.class)
 assertThat(jp.getCountry()).isEqualTo("JP");
 ```
 
-### 11. Sequences
+Unknown trait names throw `IllegalArgumentException` with a list of available traits.
+
+### 10. Sequences
 
 Predictable, auto-incrementing values for fields:
 
@@ -309,7 +314,7 @@ ctx.sequence(BOOK.PAGES, n -> (int) (n * 100));
 // 100, 200, 300, ...
 ```
 
-### 12. Lifecycle Callbacks
+### 11. Lifecycle Callbacks
 
 Execute logic before/after entity insertion:
 
@@ -344,7 +349,7 @@ ctx.create(AUTHOR, Author.class).trait("logged").build();
 // logs: "base", then "trait"
 ```
 
-### 13. Batch Creation
+### 12. Batch Creation
 
 Create multiple entities at once with `.times()`:
 
@@ -363,7 +368,83 @@ List<Author> europeans = ctx.create(AUTHOR, Author.class)
     .times(10);
 ```
 
-### 14. Custom Value Generators
+### 13. Factory Inheritance
+
+Define parent/child factory definitions with automatic merging:
+
+```java
+// Parent definition
+ctx.define("baseAuthor", AUTHOR, f -> {
+    f.set(AUTHOR.NAME, "Base Author");
+    f.set(AUTHOR.COUNTRY, "US");
+    f.trait("european", t -> t.set(AUTHOR.COUNTRY, "DE"));
+    f.afterCreate(record -> log.info("Created author"));
+});
+
+// Child inherits defaults, traits, and callbacks
+ctx.define(AUTHOR, f -> {
+    f.parent("baseAuthor");
+    f.set(AUTHOR.NAME, "Child Author"); // overrides parent's NAME
+    // COUNTRY="US" inherited, "european" trait inherited, afterCreate inherited
+});
+
+Author author = ctx.create(AUTHOR, Author.class).build();
+// name="Child Author" (child), country="US" (parent)
+
+Author eu = ctx.create(AUTHOR, Author.class).trait("european").build();
+// country="DE" (inherited trait)
+```
+
+**Merge rules:**
+- Defaults: child overrides parent
+- Generators: child overrides parent
+- Traits: child overrides parent traits with same name
+- Callbacks: concatenated (parent first, then child)
+
+Missing parent definitions throw `IllegalStateException`. Cyclic inheritance (A → B → A) is detected and throws.
+
+### 14. Build Strategies
+
+Control how entities are built:
+
+```java
+// Build without inserting into database (no FK auto-creation, no callbacks)
+AuthorRecord record = ctx.createRecord(AUTHOR)
+    .set(AUTHOR.NAME, "Preview")
+    .buildWithoutInsert();
+// record is populated but NOT in the database
+
+// Inspect resolved attributes as a map
+Map<Field<?>, Object> attrs = ctx.createRecord(AUTHOR)
+    .trait("european")
+    .buildAttributes();
+// attrs contains {AUTHOR.NAME -> "...", AUTHOR.COUNTRY -> "DE", ...}
+```
+
+### 15. Transient Attributes
+
+Pass non-persisted data to lifecycle callbacks:
+
+```java
+ctx.define(AUTHOR, f -> {
+    f.set(AUTHOR.NAME, "Author");
+    f.afterCreate((record, transients) -> {
+        int bookCount = transients.getOrDefault("bookCount", Integer.class, 0);
+        UUID authorId = (UUID) record.get(AUTHOR.ID);
+        for (int i = 0; i < bookCount; i++) {
+            ctx.create(BOOK, Book.class).set(BOOK.AUTHOR_ID, authorId).build();
+        }
+    });
+});
+
+// Pass transient values at build time
+Author author = ctx.create(AUTHOR, Author.class)
+    .transientAttr("bookCount", 3)
+    .build();
+// 3 books auto-created via callback
+```
+
+### 16. Custom Value Generators
 
 Register custom generators for specific fields or types:
 
@@ -384,7 +465,7 @@ Author author = ctx.create(AUTHOR, Author.class)
     .build();
 ```
 
-### 15. Creating JootContext
+### 17. Creating JootContext
 
 `JootContext` is created from a jOOQ `DSLContext`. Choose the approach based on your test lifecycle needs:
 
@@ -455,7 +536,7 @@ class MyTest extends BaseIntegrationTest {
 
 **⚠️ Important:** `JootContext` is mostly stateless, but `GeneratorRegistry` (custom generators) is shared state. If tests register different generators, use Approach 1.
 
-### 16. Database-Generated Values
+### 18. Database-Generated Values
 
 Joot respects database-generated values:
 
@@ -572,6 +653,7 @@ JootContext ctx = JootContext.create(dsl);
 
 // Factory definitions
 ctx.define(TABLE, f -> { ... });
+ctx.define("name", TABLE, f -> { f.parent("parentName"); ... });
 
 // Sequences
 ctx.sequence(FIELD, n -> "value" + n);
@@ -582,6 +664,9 @@ ctx.sequence(FIELD, n -> "value" + n);
 
 // Data access
 <T> T get(Object pk, Table<?> table, Class<T> pojoClass);
+
+// Nullable fields control
+ctx.generateNullables(false);  // globally skip nullable fields
 
 // Custom generators
 <T> void registerGenerator(Field<T> field, ValueGenerator<T> generator);
@@ -607,8 +692,13 @@ builder.withGenerator(FIELD, generator)
 List<T> times(int count)
 List<T> times(int count, (builder, index) -> { ... })
 
-// Build
-T build()
+// Transient attributes
+builder.transientAttr("name", value)
+
+// Build strategies
+T build()                           // insert + return
+T buildWithoutInsert()              // no insert, no FK auto-creation
+Map<Field<?>, Object> buildAttributes()  // resolved values map
 ```
 
 ---

@@ -4,6 +4,7 @@ import org.jooq.Field;
 import org.jooq.Record;
 
 import java.util.List;
+import java.util.Map;
 import java.util.function.BiConsumer;
 
 /**
@@ -85,10 +86,36 @@ public interface RecordBuilder<R extends Record> {
     List<R> times(int count, BiConsumer<RecordBuilder<R>, Integer> customizer);
 
     /**
+     * Sets a transient attribute that is passed to lifecycle callbacks but not persisted.
+     *
+     * @param name the attribute name
+     * @param value the attribute value
+     * @return this builder for chaining
+     */
+    RecordBuilder<R> transientAttr(String name, Object value);
+
+    /**
      * Creates the entity in the database and returns the Record.
      *
      * @return the created Record with all fields populated (including generated PKs)
      */
     R build();
+
+    /**
+     * Builds a Record with all values populated but does NOT insert into the database.
+     * Foreign key dependencies are NOT auto-created.
+     * Lifecycle callbacks are NOT executed.
+     *
+     * @return the populated Record (not persisted)
+     */
+    R buildWithoutInsert();
+
+    /**
+     * Returns the resolved field-value map without creating a Record or inserting.
+     * Useful for inspecting what values would be generated.
+     *
+     * @return map of fields to their resolved values
+     */
+    Map<Field<?>, Object> buildAttributes();
 }
 
